@@ -1,0 +1,285 @@
+#include "Engine.hpp"
+#include "Game.hpp"
+#include "Platform.hpp"
+#include "Result.hpp"
+#include "ScriptEngine.hpp"
+#include "Util.hpp"
+
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+#include <SDL2/SDL_mixer.h>
+#include <SDL2/SDL_ttf.h>
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <fmt/format.h>
+#include <fstream>
+#include <memory>
+#include <spdlog/common.h>
+#include <spdlog/logger.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+#include <string>
+#include <string_view>
+#include <tinyxml2.h>
+#include <toml++/impl/parser.hpp>
+#include <toml++/impl/table.hpp>
+#include <toml++/toml.hpp>
+
+#define FORCE_TRACE
+
+namespace engine {
+Engine::Engine(const Config cfg, std::shared_ptr<spdlog::logger> logger, ScriptEngine script)
+    : m_Cfg(cfg)
+    , m_Logger(logger)
+    , m_Script(script)
+{
+}
+Engine::~Engine()
+{
+}
+
+Result<Engine> Engine::New(const int argc, const char** argv)
+{
+    // TODO: Load a config from a config file and console line args. Also,
+    // initialize all dependencies.
+
+    auto logger = spdlog::stdout_color_mt("console");
+    logger->set_pattern("\033[90m%Y-%m-%d %H:%M:%S t%t %^[%l]%$ %v");
+    if (argc > 1) {
+        if (!strcmp(argv[1], "trace")) {
+            logger->set_level(spdlog::level::trace);
+            logger->info("Trace log level");
+        } else if (!strcmp(argv[1], "debug")) {
+            logger->set_level(spdlog::level::debug);
+            logger->info("Debug log level");
+        }
+    }
+#ifdef FORCE_TRACE
+    logger->set_level(spdlog::level::trace);
+#endif
+    logger->trace("Console logger created");
+
+    Config cfg = Config::Default();
+
+    logger->trace("Engine created and initialized");
+
+    auto script = ScriptEngine::New(logger);
+    if (script.IsErr()) {
+        logger->error("Creation of the script engine failed: {}", script.UnwrapErr().ToString());
+        return script.UnwrapErr();
+    }
+    return Result(Engine(cfg, logger, script.Unwrap()));
+}
+
+Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const GameFormat format) const
+{
+    m_Logger->trace("Loading game {} with format {}", path.string(), (int)format);
+
+    if (!std::filesystem::exists(path)) {
+        m_Logger->error("File doesn't exist", path.string());
+        return Error(Error::InvalidGame, fmt::format("File doesn't exist: {}", path.string()));
+    }
+    if (!std::filesystem::is_directory(path)) {
+        m_Logger->error("A format {} game has to be a folder", (int)format);
+        return Error::InvalidGame;
+    }
+    if (!std::filesystem::exists(path / "game.toml")) {
+        m_Logger->error("Missing metadata file");
+        return Error::InvalidGame;
+    }
+    if (!std::filesystem::exists(path / "resources.xml")) {
+        m_Logger->error("Missing resource table");
+        return Error::InvalidGame;
+    }
+
+    std::ifstream metadataFile(path / "game.toml");
+    if (!metadataFile) {
+        m_Logger->error("Couldn't open metadata file: errno {}: '{}'", errno, std::strerror(errno));
+        return Error::Io;
+    }
+
+    auto metadataToml = toml::parse_file((path / "game.toml").string());
+
+    if (!metadataToml["meta"]["name"].is_string()) {
+        m_Logger->error("Required field `name` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["meta"]["title"].is_string()) {
+        m_Logger->error("Required field `title` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["meta"]["description"].is_string()) {
+        m_Logger->error("Required field `meta.description` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["meta"]["author"].is_string()) {
+        m_Logger->error("Required field `meta.author` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["meta"]["license"].is_string()) {
+        m_Logger->error("Required field `meta.license` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["meta"]["version"].is_string()) {
+        m_Logger->error("Required field `meta.version` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["target"]["platforms"].is_array()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["target"]["lua"].is_string()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["game"]["entry_scene"].is_string()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["graphics"]["resolution"].is_array()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["graphics"]["fullscreen"].is_boolean()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["graphics"]["allow_resizing"].is_boolean()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+    if (!metadataToml["audio"]["volume"].is_floating_point()) {
+        m_Logger->error("Required field `target.platforms` is missing");
+        return Error::InvalidGame;
+    }
+
+    game::Game game;
+
+    game.Meta.Name = metadataToml["meta"]["name"].as_string()->get();
+    game.Meta.Title = metadataToml["meta"]["title"].as_string()->get();
+    game.Meta.Description = metadataToml["meta"]["description"].as_string()->get();
+    game.Meta.Author = metadataToml["meta"]["author"].as_string()->get();
+    game.Meta.License = metadataToml["meta"]["license"].as_string()->get();
+    game.Meta.Version = util::Version::FromString(metadataToml["meta"]["version"].as_string()->get()).UnwrapOrDefault(util::Version::Max());
+    if (game.Meta.Version == util::Version::Max()) {
+        m_Logger->error("Invalid version format");
+        return Error::InvalidGame;
+    }
+
+    for (auto&& platforNode : *metadataToml["target"]["platforms"].as_array()) {
+        if (!platforNode.is_string()) {
+            m_Logger->error("Invalid platform format!");
+            return Error::InvalidGame;
+        }
+
+        auto platform = platforNode.as_string()->get();
+        if (platform == "Linux") {
+            game.Meta.Target.Platforms.emplace_back(game::Platform::Linux);
+        } else if (platform == "MacOS") {
+            game.Meta.Target.Platforms.emplace_back(game::Platform::Darwin);
+        } else if (platform == "Windows") {
+            game.Meta.Target.Platforms.emplace_back(game::Platform::Windows);
+        } else {
+            m_Logger->error("Unknown platform: {}", platform);
+            return Error::InvalidGame;
+        }
+    }
+
+    std::string luaTarget = metadataToml["target"]["lua"].as_string()->get();
+    if (luaTarget == "5.4") {
+        game.Meta.Target.Lua = game::LuaTarget::Lua54;
+    } else if (luaTarget == "5.1") {
+        game.Meta.Target.Lua = game::LuaTarget::Lua51;
+    } else if (luaTarget == "JIT") {
+        game.Meta.Target.Lua = game::LuaTarget::LuaJit;
+    } else {
+        m_Logger->error("Unknown lua target: {}", luaTarget);
+        return Error::InvalidGame;
+    }
+
+    game.Meta.Game.EntryScene = metadataToml["game"]["entry_scene"].as_string()->get();
+
+    auto resolutionArray = *metadataToml["graphics"]["resolution"].as_array();
+    if (!resolutionArray[0].is_integer() || !resolutionArray[1].is_integer()) {
+        m_Logger->error("Invalid resolution");
+        return Error::InvalidGame;
+    }
+    game.Meta.Graphics.WindowResolution.Width = resolutionArray[0].as_integer()->get();
+    game.Meta.Graphics.WindowResolution.Height = resolutionArray[1].as_integer()->get();
+
+    game.Meta.Graphics.WindowFullscreen = metadataToml["graphics"]["fullscreen"].as_boolean()->get();
+    game.Meta.Graphics.WindowResizing = metadataToml["graphics"]["allow_resizing"].as_boolean()->get();
+
+    game.Meta.Audio.Volume = metadataToml["audio"]["volume"].as_floating_point()->get();
+
+    if (game.Meta.Audio.Volume > 1 || game.Meta.Audio.Volume < 0) {
+        m_Logger->error("The audio volue must be in the range 0-1");
+        return Error::InvalidGame;
+    }
+
+    // TODO: Load resource table
+
+    tinyxml2::XMLDocument resourceTableXml;
+    auto xmlError = resourceTableXml.LoadFile((path / "resources.xml").c_str());
+    if (xmlError != tinyxml2::XML_SUCCESS) {
+        m_Logger->error("Error loading the resource table: {}", resourceTableXml.ErrorStr());
+        return Error::Io;
+    }
+
+    auto rootElem = resourceTableXml.RootElement();
+    if (rootElem == nullptr) {
+        m_Logger->error("No root element in resources.xml");
+        return Error::InvalidGame;
+    }
+
+    for (auto element = rootElem->FirstChildElement("Resource"); element != nullptr; element = element->NextSiblingElement("Resource")) {
+        auto type = element->Attribute("type");
+        auto key = element->Attribute("key");
+        auto source = element->Attribute("source");
+
+        if (!type || !key || !source) {
+            m_Logger->error("The resource is missing a type or key or source");
+            return Error::InvalidGame;
+        }
+
+        game::ResourceDef res;
+        if (std::string_view(type) == "Text") {
+            res.Type = game::ResourceType::Text;
+        } else if (std::string_view(type) == "Sprite") {
+            res.Type = game::ResourceType::Sprite;
+        } else if (std::string_view(type) == "Music") {
+            res.Type = game::ResourceType::Music;
+        } else if (std::string_view(type) == "Sound") {
+            res.Type = game::ResourceType::SoundEffect;
+        } else if (std::string_view(type) == "Font") {
+            res.Type = game::ResourceType::Font;
+        } else if (std::string_view(type) == "Anim") {
+            res.Type = game::ResourceType::Animation;
+        } else {
+            m_Logger->error("Invalid resource type: {}", type);
+            return Error::InvalidGame;
+        }
+        res.Key = key;
+        res.Source = source;
+    }
+
+    return Result(game);
+}
+Result<> Engine::StartGame(const game::Game& game) const
+{
+    auto pplatf = GetPlatform();
+    auto platf = game::FromPlatformPlatform(pplatf).UnwrapOrDefault(static_cast<game::Platform>(0)); // TODO: Make it actually not fucking suck maybe?
+    if (pplatf == Platform::Unknown || std::find(game.Meta.Target.Platforms.begin(), game.Meta.Target.Platforms.end(), platf) == game.Meta.Target.Platforms.end()) {
+        m_Logger->critical("Platform not supported!");
+        return Error(Error::UnsupportedPlatform, "Platform not supported");
+    }
+
+    // TODO: Ensure the right lua runtime
+
+    return Error::NotImplemented;
+}
+
+
+} // namespace engine
