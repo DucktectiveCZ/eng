@@ -1,49 +1,58 @@
 #include "Engine.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+
+#include <spdlog/common.h>
+#include <spdlog/logger.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+#include <fmt/format.h>
+#include <thread>
+#include <tinyxml2.h>
+#include <toml++/impl/parser.hpp>
+#include <toml++/impl/table.hpp>
+#include <toml++/toml.hpp>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+#include <SDL2/SDL_mixer.h>
+#include <SDL2/SDL_ttf.h>
+
+#include "EngineMetadata.hpp"
 #include "Game.hpp"
 #include "Platform.hpp"
 #include "Result.hpp"
 #include "ScriptEngine.hpp"
 #include "Util.hpp"
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_mixer.h>
-#include <SDL2/SDL_ttf.h>
-#include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <filesystem>
-#include <fmt/format.h>
-#include <fstream>
-#include <memory>
-#include <spdlog/common.h>
-#include <spdlog/logger.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
-#include <string>
-#include <string_view>
-#include <tinyxml2.h>
-#include <toml++/impl/parser.hpp>
-#include <toml++/impl/table.hpp>
-#include <toml++/toml.hpp>
-
 #define FORCE_TRACE
 
 namespace engine {
-Engine::Engine(const Config cfg, std::shared_ptr<spdlog::logger> logger, ScriptEngine script)
+Engine::Engine(const Config& cfg, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<ScriptEngine> script, std::shared_ptr<RenderingEngine> rendering, std::shared_ptr<std::atomic<bool>> runningFlag)
     : m_Cfg(cfg)
+    , m_Game(std::nullopt)
     , m_Logger(logger)
     , m_Script(script)
+    , m_RenderingEngine(rendering)
+    , m_RunningFlag(runningFlag)
 {
 }
 Engine::~Engine()
 {
 }
 
-Result<Engine> Engine::New(const int argc, const char** argv)
+Result<std::shared_ptr<Engine>> Engine::New(const int argc, const char** argv)
 {
-    // TODO: Load a config from a config file and console line args. Also,
-    // initialize all dependencies.
+    // TODO: Load a config from a config file and console line args. Also, initialize all dependencies.
 
     auto logger = spdlog::stdout_color_mt("console");
     logger->set_pattern("\033[90m%Y-%m-%d %H:%M:%S t%t %^[%l]%$ %v");
@@ -51,6 +60,7 @@ Result<Engine> Engine::New(const int argc, const char** argv)
         if (!strcmp(argv[1], "trace")) {
             logger->set_level(spdlog::level::trace);
             logger->info("Trace log level");
+            SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
         } else if (!strcmp(argv[1], "debug")) {
             logger->set_level(spdlog::level::debug);
             logger->info("Debug log level");
@@ -58,23 +68,36 @@ Result<Engine> Engine::New(const int argc, const char** argv)
     }
 #ifdef FORCE_TRACE
     logger->set_level(spdlog::level::trace);
+    SDL_LogSetAllPriority(SDL_LOG_PRIORITY_VERBOSE);
 #endif
     logger->trace("Console logger created");
 
     Config cfg = Config::Default();
 
-    logger->trace("Engine created and initialized");
+    std::shared_ptr<std::atomic<bool>> runningFlag = std::make_shared<std::atomic<bool>>();
+    runningFlag->store(true);
 
-    auto script = ScriptEngine::New(logger);
+    auto rendering = RenderingEngine::New(logger, cfg);
+    if (rendering.IsErr()) {
+        logger->error("Creation of the rendering engine failed: {}", rendering.UnwrapErr().ToString());
+        return rendering.UnwrapErr();
+    }
+    auto script = ScriptEngine::New(logger, runningFlag);
     if (script.IsErr()) {
         logger->error("Creation of the script engine failed: {}", script.UnwrapErr().ToString());
         return script.UnwrapErr();
     }
-    return Result(Engine(cfg, logger, script.Unwrap()));
+
+    return Result(std::make_shared<Engine>(cfg, logger, script.Unwrap(), rendering.Unwrap(), runningFlag));
 }
 
-Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const GameFormat format) const
+Result<> Engine::LoadGame(const std::filesystem::path& path, const GameFormat format)
 {
+    if (m_Game.has_value()) {
+        m_Logger->error("Can not load a new game as there already is one loaded.");
+        return Error(Error::InvalidState, "Game is already loaded");
+    }
+
     m_Logger->trace("Loading game {} with format {}", path.string(), (int)format);
 
     if (!std::filesystem::exists(path)) {
@@ -168,13 +191,13 @@ Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const Gam
         return Error::InvalidGame;
     }
 
-    for (auto&& platforNode : *metadataToml["target"]["platforms"].as_array()) {
-        if (!platforNode.is_string()) {
+    for (auto&& platformNode : *metadataToml["target"]["platforms"].as_array()) {
+        if (!platformNode.is_string()) {
             m_Logger->error("Invalid platform format!");
             return Error::InvalidGame;
         }
 
-        auto platform = platforNode.as_string()->get();
+        auto platform = platformNode.as_string()->get();
         if (platform == "Linux") {
             game.Meta.Target.Platforms.emplace_back(game::Platform::Linux);
         } else if (platform == "MacOS") {
@@ -219,8 +242,6 @@ Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const Gam
         return Error::InvalidGame;
     }
 
-    // TODO: Load resource table
-
     tinyxml2::XMLDocument resourceTableXml;
     auto xmlError = resourceTableXml.LoadFile((path / "resources.xml").c_str());
     if (xmlError != tinyxml2::XML_SUCCESS) {
@@ -232,6 +253,10 @@ Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const Gam
     if (rootElem == nullptr) {
         m_Logger->error("No root element in resources.xml");
         return Error::InvalidGame;
+    }
+    if (std::string_view(rootElem->Name()) != "ResourceTable") {
+        m_Logger->error("The root element isn't a resourceTable");
+        return Error(Error::InvalidGame, "The root element isn't a resourceTable");
     }
 
     for (auto element = rootElem->FirstChildElement("Resource"); element != nullptr; element = element->NextSiblingElement("Resource")) {
@@ -265,21 +290,56 @@ Result<game::Game> Engine::LoadGame(const std::filesystem::path& path, const Gam
         res.Source = source;
     }
 
-    return Result(game);
+    m_Game = game;
+
+    return Result();
 }
-Result<> Engine::StartGame(const game::Game& game) const
-{
-    auto pplatf = GetPlatform();
-    auto platf = game::FromPlatformPlatform(pplatf).UnwrapOrDefault(static_cast<game::Platform>(0)); // TODO: Make it actually not fucking suck maybe?
-    if (pplatf == Platform::Unknown || std::find(game.Meta.Target.Platforms.begin(), game.Meta.Target.Platforms.end(), platf) == game.Meta.Target.Platforms.end()) {
-        m_Logger->critical("Platform not supported!");
-        return Error(Error::UnsupportedPlatform, "Platform not supported");
+
+Result<> Engine::Start() {
+    if (!m_Game.has_value()) {
+        m_Logger->error("No game loaded");
+        return Error(Error::InvalidState, "No game loaded");
     }
 
-    // TODO: Ensure the right lua runtime
+    {
+        auto pplatf = GetPlatform();
+        auto platfOpt = game::FromPlatformPlatform(pplatf);
+        if (!platfOpt.has_value()) {
+            m_Logger->error("Unknown platform");
+            return Error(Error::UnknownEnumVariant, "Unknown platform");
+        }
+        auto platf = platfOpt.value();
+
+        if (pplatf == Platform::Unknown ||
+            std::find(m_Game->Meta.Target.Platforms.begin(), m_Game->Meta.Target.Platforms.end(), platf) == m_Game->Meta.Target.Platforms.end()) {
+            m_Logger->critical("Platform not supported!");
+            return Error(Error::UnsupportedPlatform, "Platform not supported");
+        }
+    }
+
+    m_Logger->warn("Omitting lua target check");
+
+    m_RenderingEngine->SetWindowTitle(fmt::format("{} - {}", m_Game->Meta.Title, Metadata.Title));
+
+    m_Logger->trace("Entering the main loop");
+
+    SDL_Event e;
+    while (m_RunningFlag->load()) {
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) {
+                m_Logger->trace("SDL_QUIT");
+                Shutdown();
+            }
+        }
+    }
 
     return Error::NotImplemented;
 }
 
+void Engine::Shutdown() {
+    m_Logger->trace("Shutting down");
+    m_RunningFlag->store(false);
+}
 
 } // namespace engine
+

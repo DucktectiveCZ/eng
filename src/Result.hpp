@@ -24,6 +24,7 @@ struct Error {
         Lua,
         LuaUnexpectedNil,
         LuaWrongType,
+        LuaInit,
     };
 
     Error(const ErrorType& et);
@@ -37,7 +38,7 @@ struct Error {
 
 struct Unit { };
 
-template <typename T = Unit>
+template <typename T = Unit, typename = std::enable_if_t<!std::is_same_v<T, Error>>>
 class [[nodiscard]] Result final {
 private:
     std::variant<T, Error> data;
@@ -49,8 +50,9 @@ public:
     }
     template <typename U = T, std::enable_if_t<std::is_same_v<U, Unit>, int> = 0>
     Result()
-        : data(Unit{})
-    {}
+        : data(Unit {})
+    {
+    }
 
     Result(Error data)
         : data(std::move(data))

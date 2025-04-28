@@ -9,7 +9,8 @@ enum class Platform {
     Windows,
 };
 
-inline Platform GetPlatform() {
+inline Platform GetPlatform()
+{
 #if defined(_WIN32) || defined(_WIN64)
     return Platform::Windows;
 #elif defined(__linux__)

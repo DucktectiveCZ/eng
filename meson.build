@@ -1,6 +1,6 @@
 project('eng', 'cpp',
   version: '0.1',
-  default_options: ['cpp_std=c++20', 'cxx_flags=-fno-exceptions']
+  default_options: ['cpp_std=c++20', 'warning_level=3']
 )
 
 sdl2_dep = dependency('sdl2')
@@ -10,7 +10,12 @@ sdl2_ttf_dep = dependency('SDL2_ttf')
 spdlog_dep = dependency('spdlog')
 tomlplusplus_dep = dependency('tomlplusplus')
 tinyxml2_dep = dependency('tinyxml2', required: true)
-lua_dep = dependency('lua', required: true)
+lua_dep = dependency('luajit', required: true)
+sol2_inc = include_directories('external/sol2/include/')
+
+inc_dirs = [
+  sol2_inc,
+]
 
 deps = [
   sdl2_dep,
@@ -20,7 +25,7 @@ deps = [
   spdlog_dep,
   tomlplusplus_dep,
   tinyxml2_dep,
-  lua_dep
+  lua_dep,
 ]
 
 subdir('src')

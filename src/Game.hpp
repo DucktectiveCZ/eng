@@ -14,16 +14,17 @@ namespace game {
         Darwin = 1,
         Windows = 2,
     };
-    inline Result<Platform> FromPlatformPlatform(const ::engine::Platform& platf) {
+    inline std::optional<Platform> FromPlatformPlatform(const ::engine::Platform& platf)
+    {
         switch (platf) {
         case ::engine::Platform::Linux:
-            return Result(Platform::Linux);
+            return Platform::Linux;
         case ::engine::Platform::Darwin:
-            return Result(Platform::Darwin);
+            return Platform::Darwin;
         case ::engine::Platform::Windows:
-            return Result(Platform::Windows);
+            return Platform::Windows;
         default:
-            return Error(Error::UnknownEnumVariant, "Unknown or unconvertable platform enum variant");
+            return std::nullopt;
         };
     }
 
