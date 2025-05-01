@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -17,7 +16,6 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
-#include <thread>
 #include <tinyxml2.h>
 #include <toml++/impl/parser.hpp>
 #include <toml++/impl/table.hpp>
@@ -310,8 +308,10 @@ Result<> Engine::Start() {
         }
         auto platf = platfOpt.value();
 
-        if (pplatf == Platform::Unknown ||
-            std::find(m_Game->Meta.Target.Platforms.begin(), m_Game->Meta.Target.Platforms.end(), platf) == m_Game->Meta.Target.Platforms.end()) {
+        if (
+            pplatf == Platform::Unknown
+            || std::find(m_Game->Meta.Target.Platforms.begin(), m_Game->Meta.Target.Platforms.end(), platf) == m_Game->Meta.Target.Platforms.end()
+        ) {
             m_Logger->critical("Platform not supported!");
             return Error(Error::UnsupportedPlatform, "Platform not supported");
         }
@@ -333,7 +333,7 @@ Result<> Engine::Start() {
         }
     }
 
-    return Error::NotImplemented;
+    return Result();
 }
 
 void Engine::Shutdown() {

@@ -17,17 +17,19 @@ class ScriptEngine final {
 private:
     std::shared_ptr<spdlog::logger> m_Logger;
     std::shared_ptr<std::atomic<bool>> m_EngineRunning;
-    std::shared_ptr<sol::state> m_Lua;
+    sol::state m_Lua;
 
     Result<> InitGlobals();
+    Result<> LoadLibs();
 
 public:
-    ScriptEngine(std::shared_ptr<sol::state> lua, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningRef);
-    ~ScriptEngine();
+    ScriptEngine(sol::state&& lua, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningRef);
+    ~ScriptEngine() = default;
 
     static Result<std::shared_ptr<ScriptEngine>> New(std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningFlagRef);
 
     Result<> Execute(const std::string_view source);
+    Result<> ExecuteFile(const std::string_view path);
 };
 
 }

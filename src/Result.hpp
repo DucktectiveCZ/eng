@@ -107,6 +107,18 @@ public:
     {
         return;
     }
+
+    bool operator!() const {
+        return IsErr();
+    }
+
+    operator bool() const {
+        return IsOk();
+    }
+
+    const T& operator*() const {
+        return Unwrap();
+    }
 };
 }
 
