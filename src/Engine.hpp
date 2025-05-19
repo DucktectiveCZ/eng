@@ -25,7 +25,15 @@ enum class GameFormat {
 
 class Engine final {
 public:
-    Engine(const Config& cfg, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<ScriptEngine> script, std::shared_ptr<RenderingEngine> rendering, std::shared_ptr<std::atomic<bool>> runningFlag);
+    Engine(
+        Config&& cfg,
+        std::shared_ptr<spdlog::logger> logger,
+        std::shared_ptr<ScriptEngine> script,
+        std::shared_ptr<RenderingEngine> rendering,
+        std::shared_ptr<EventEngine> event,
+        std::shared_ptr<std::atomic<bool>> runningFlag,
+        std::shared_ptr<std::atomic<State>> state
+    );
     ~Engine();
 
     static Result<std::shared_ptr<Engine>> New(const int argc, const char* argv[]);
@@ -40,9 +48,12 @@ private:
     std::optional<game::Game> m_Game;
     const std::shared_ptr<spdlog::logger> m_Logger;
     std::shared_ptr<ScriptEngine> m_Script;
-    std::shared_ptr<RenderingEngine> m_RenderingEngine;
+    std::shared_ptr<RenderingEngine> m_Rendering;
+    std::shared_ptr<EventEngine> m_Event;
     std::shared_ptr<std::atomic<bool>> m_RunningFlag;
     std::shared_ptr<std::atomic<State>> m_State;
+
+    Result<> Update();
 };
 }
 

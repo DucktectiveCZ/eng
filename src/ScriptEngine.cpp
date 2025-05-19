@@ -1,8 +1,6 @@
-#include "Constants.hpp"
-#include <fstream>
-#include <string_view>
-#define SOL_NO_EXCEPTIONS 1
+#include "ScriptEngine.hpp"
 
+#include <string_view>
 #include <string>
 #include <utility>
 #include <atomic>
@@ -12,8 +10,9 @@
 #include <sol/state.hpp>
 #include <sol/error.hpp>
 
-#include "ScriptEngine.hpp"
+#include "Panic.hpp"
 #include "Result.hpp"
+#include "Constants.hpp"
 
 namespace engine {
 
@@ -44,12 +43,13 @@ Result<> ScriptEngine::LoadLibs()
 
         auto path = entry.path();
 
-        m_Logger->trace("Loading {}", path.string())
 
         if (!entry.is_regular_file()) {
             m_Logger->warn("{} isn't a regular file, ignoring", path.string());
             continue;
         }
+
+        m_Logger->trace("Loading {}", path.string());
 
         auto res = ExecuteFile(path.string());
         if (!res)
@@ -86,9 +86,15 @@ Result<> ScriptEngine::InitGlobals()
     return Result();
 }
 
-Result<std::shared_ptr<ScriptEngine>> ScriptEngine::New(std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningFlagRef)
+Result<std::shared_ptr<ScriptEngine>> ScriptEngine::New(
+    std::shared_ptr<spdlog::logger> logger,
+    std::shared_ptr<std::atomic<bool>> engineRunningFlagRef
+)
 {
-    sol::state lua;
+    sol::state lua([](auto) -> int {
+        Panic("The Lua runtime panicked.");
+        return 1;
+    });
 
     auto self = std::make_shared<ScriptEngine>(std::move(lua), logger, engineRunningFlagRef);
 

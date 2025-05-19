@@ -20,6 +20,13 @@
 -- SOFTWARE.
 --
 
+---@diagnostic disable: unused-local
+
+-- Halts the program if condition is false.
+-- May be used this for critical assertions that must not fail.
+--
+---@param condition boolean
+---@param message string
 function assert(condition, message)
     if not condition then
         error('Assertion failed: ' .. message)
@@ -27,6 +34,11 @@ function assert(condition, message)
     end
 end
 
+-- Warns if condition is false.
+-- May be used for non-critical assertions.
+--
+---@param condition boolean
+---@param message string
 function assert_warn(condition, message)
     if not condition then
         warn('Assertion failed: ' .. message)

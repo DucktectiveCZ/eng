@@ -2,6 +2,7 @@
 #define ENG_GAME_HPP
 
 #include "Platform.hpp"
+#include "Result.hpp"
 #include "Util.hpp"
 #include <optional>
 #include <string>

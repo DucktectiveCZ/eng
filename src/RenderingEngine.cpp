@@ -1,23 +1,24 @@
 #include "RenderingEngine.hpp"
-#include "EngineMetadata.hpp"
-#include "Result.hpp"
-#include "SDL_error.h"
-#include "SDL_render.h"
-#include "SDL_stdinc.h"
-#include "SDL_version.h"
-#include "SDL_video.h"
+
+#include <csignal>
+#include <cstring>
+#include <memory>
+#include <string_view>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_mixer.h>
 #include <SDL2/SDL_ttf.h>
-
-#include <csignal>
-#include <cstring>
-#include <memory>
+#include <SDL2/SDL_error.h>
+#include <SDL2/SDL_render.h>
+#include <SDL2/SDL_stdinc.h>
+#include <SDL2/SDL_version.h>
+#include <SDL2/SDL_video.h>
 #include <spdlog/logger.h>
 #include <spdlog/spdlog.h>
-#include <string_view>
+
+#include "EngineMetadata.hpp"
+#include "Result.hpp"
 
 namespace engine {
 
@@ -30,14 +31,16 @@ RenderingEngine::RenderingEngine(const std::shared_ptr<spdlog::logger> logger, S
 
 RenderingEngine::~RenderingEngine()
 {
+    m_Logger->trace("Finalizing RenderingEngine");
     SDL_DestroyWindow(m_Window);
+    m_Window = nullptr;
     SDL_DestroyRenderer(m_Renderer);
+    m_Renderer = nullptr;
 
     TTF_Quit();
     Mix_Quit();
     IMG_Quit();
     SDL_Quit();
-    spdlog::shutdown();
 }
 
 Result<std::shared_ptr<RenderingEngine>>
@@ -113,25 +116,35 @@ RenderingEngine::New(const std::shared_ptr<spdlog::logger> logger, const Config&
         return Error(Error::Sdl, error);
     }
 
-    SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
+
     SDL_RenderPresent(renderer);
 
     SDL_RendererInfo rendererInfo;
     if (SDL_GetRendererInfo(renderer, &rendererInfo) != 0) {
-        logger->error("Couldn't retrieve the renderer info");
-        return Error(Error::Sdl, "Couldn't retrieve the renderer info");
+        logger->error("Couldn't retrieve the SDL renderer info");
+    } else {
+        logger->info("Using SDL v{}.{}.{} with {} as a rendering backend on {}", SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, rendererInfo.name, videoDriver);
     }
-
-    logger->info("Using SDL v{}.{}.{} with {} as a rendering backend on {}", SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, rendererInfo.name, videoDriver);
 
     return Result(std::make_shared<RenderingEngine>(logger, window, renderer));
 }
 
 void RenderingEngine::SetWindowTitle(const std::string_view title)
 {
-    m_Logger->trace("Setting the window title");
+    m_Logger->trace("Setting the window title to {}", title.data());
     SDL_SetWindowTitle(m_Window, title.data());
+}
+
+Result<> RenderingEngine::Update()
+{
+    SDL_SetRenderDrawColor(m_Renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_Renderer);
+
+    SDL_RenderPresent(m_Renderer);
+
+    return Result();
 }
 
 } // namespace engine

@@ -55,19 +55,31 @@ public:
     }
 
     Result(Error data)
-        : data(std::move(data))
-    {
-    }
-    Result(Error::ErrorType errorType)
-        : data(std::move(Error(errorType)))
+        : data(data)
     {
     }
 
-    static Result<T> Ok(T val)
+    Result(Error::ErrorType errorType)
+        : data(Error(errorType))
+    {
+    }
+
+    static Result<T> Ok(const T& val)
+    {
+        return Result<T>(val);
+    }
+
+    static Result<T> Ok(T&& val)
     {
         return Result<T>(std::move(val));
     }
-    static Result<T> Err(T val)
+
+    static Result<T> Err(const Error& val)
+    {
+        return Result<T>(val);
+    }
+
+    static Result<T> Err(Error&& val)
     {
         return Result<T>(std::move(val));
     }
@@ -76,10 +88,12 @@ public:
     {
         return std::holds_alternative<T>(data);
     }
+
     bool IsErr() const
     {
         return !IsOk();
     }
+
     const T& Unwrap() const
     {
         if (!IsOk()) {
@@ -89,6 +103,27 @@ public:
         }
         return std::get<T>(data);
     }
+
+    T& Unwrap()
+    {
+        if (!IsOk()) {
+            Panic(fmt::format("Result isn't ok. Err: {}", std::get<Error>(data).ToString()));
+            // FIXME: `std::get` could throw or crash if `data` doesn't
+            // contain an `Error`
+        }
+        return std::get<T>(data);
+    }
+
+    T&& UnwrapMove()
+    {
+        if (!IsOk()) {
+            Panic(fmt::format("Result isn't ok. Err: {}", std::get<Error>(data).ToString()));
+            // FIXME: `std::get` could throw or crash if `data` doesn't
+            // contain an `Error`
+        }
+        return std::move(std::get<T>(data));
+    }
+
     const Error& UnwrapErr() const
     {
         if (IsOk()) {
@@ -96,6 +131,7 @@ public:
         }
         return std::get<Error>(data);
     }
+
     const T& UnwrapOrDefault(const T& d) const
     {
         if (!IsOk()) {
@@ -103,6 +139,7 @@ public:
         }
         return std::get<T>(data);
     }
+
     void Discard() const
     {
         return;
@@ -117,6 +154,10 @@ public:
     }
 
     const T& operator*() const {
+        return Unwrap();
+    }
+
+    T& operator*() {
         return Unwrap();
     }
 };

@@ -20,26 +20,32 @@
 -- SOFTWARE.
 --
 
----@meta _
+Mouse = {}
 
----@diagnostic disable: unused-local
-
--- Displays an info message.
----@param message string
-function info(message) end
-
--- Displays a warning message.
----@param message string
-function warn(message) end
-
--- Displays an error message.
----@param message string
-function error(message) end
-
--- Displays a debug message.
----@param message string
-function debug(message) end
-
--- Exits the game.
-function quit() end
+setmetatable(
+    Mouse,
+    {
+        __index = function(_, key)
+            if key == "x" then
+                return _Api_Mouse_get_x()
+            elseif key == "y" then
+                return _Api_Mouse_get_y()
+            elseif key == "left_pressed" then
+                return _Api_Mouse_lmb_pressed()
+            elseif key == "right_pressed" then
+                return _Api_Mouse_rmb_pressed()
+            elseif key == "middle_pressed" then
+                return _Api_Mouse_mmb_pressed()
+            else
+                error "No such key"
+                return nil
+            end
+        end,
+        __newindex = function(_, _)
+            error "The API can not be modified"
+            quit()
+        end,
+        __metatable = false,
+    }
+)
 

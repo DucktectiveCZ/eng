@@ -16,11 +16,12 @@ class RenderingEngine final {
 public:
     RenderingEngine(const std::shared_ptr<spdlog::logger> logger, SDL_Window* window, SDL_Renderer* renderer);
     ~RenderingEngine();
+
     static Result<std::shared_ptr<RenderingEngine>> New(const std::shared_ptr<spdlog::logger> logger, const Config& cfg);
 
     void SetWindowTitle(const std::string_view title);
 
-    void Update();
+    Result<> Update();
 
 private:
     SDL_Window *m_Window;

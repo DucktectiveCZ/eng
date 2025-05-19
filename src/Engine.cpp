@@ -35,17 +35,29 @@
 #define FORCE_TRACE
 
 namespace engine {
-Engine::Engine(const Config& cfg, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<ScriptEngine> script, std::shared_ptr<RenderingEngine> rendering, std::shared_ptr<std::atomic<bool>> runningFlag)
-    : m_Cfg(cfg)
+
+Engine::Engine(
+    Config&& cfg,
+    std::shared_ptr<spdlog::logger> logger,
+    std::shared_ptr<ScriptEngine> script, std::shared_ptr<RenderingEngine> rendering,
+    std::shared_ptr<EventEngine> event,
+    std::shared_ptr<std::atomic<bool>> runningFlag,
+    std::shared_ptr<std::atomic<State>> state
+)
+    : m_Cfg(std::move(cfg))
     , m_Game(std::nullopt)
     , m_Logger(logger)
     , m_Script(script)
-    , m_RenderingEngine(rendering)
+    , m_Rendering(rendering)
+    , m_Event(event)
     , m_RunningFlag(runningFlag)
+    , m_State(state)
 {
 }
+
 Engine::~Engine()
 {
+    m_Logger->trace("Finalizing Engine");
 }
 
 Result<std::shared_ptr<Engine>> Engine::New(const int argc, const char** argv)
@@ -72,8 +84,10 @@ Result<std::shared_ptr<Engine>> Engine::New(const int argc, const char** argv)
 
     Config cfg = Config::Default();
 
-    std::shared_ptr<std::atomic<bool>> runningFlag = std::make_shared<std::atomic<bool>>();
+    auto runningFlag = std::make_shared<std::atomic<bool>>();
     runningFlag->store(true);
+
+    auto state = std::shared_ptr<std::atomic<State>>(new std::atomic<State>{State()});
 
     auto rendering = RenderingEngine::New(logger, cfg);
     if (rendering.IsErr()) {
@@ -85,8 +99,22 @@ Result<std::shared_ptr<Engine>> Engine::New(const int argc, const char** argv)
         logger->error("Creation of the script engine failed: {}", script.UnwrapErr().ToString());
         return script.UnwrapErr();
     }
+    auto event = EventEngine::New(
+        logger,
+        runningFlag,
+        state,
+        *rendering
+    );
 
-    return Result(std::make_shared<Engine>(cfg, logger, script.Unwrap(), rendering.Unwrap(), runningFlag));
+    return Result(std::make_shared<Engine>(
+        std::move(cfg),
+        logger,
+        script.Unwrap(),
+        rendering.Unwrap(),
+        event.Unwrap(),
+        runningFlag,
+        state
+    ));
 }
 
 Result<> Engine::LoadGame(const std::filesystem::path& path, const GameFormat format)
@@ -267,6 +295,7 @@ Result<> Engine::LoadGame(const std::filesystem::path& path, const GameFormat fo
             return Error::InvalidGame;
         }
 
+
         game::ResourceDef res;
         if (std::string_view(type) == "Text") {
             res.Type = game::ResourceType::Text;
@@ -291,6 +320,16 @@ Result<> Engine::LoadGame(const std::filesystem::path& path, const GameFormat fo
     m_Game = game;
 
     return Result();
+}
+
+Result<> Engine::Update()
+{
+    if (auto res = m_Event->Update(); !res)
+        return res;
+
+    // m_Script->Update();
+
+    return m_Rendering->Update();
 }
 
 Result<> Engine::Start() {
@@ -319,18 +358,15 @@ Result<> Engine::Start() {
 
     m_Logger->warn("Omitting lua target check");
 
-    m_RenderingEngine->SetWindowTitle(fmt::format("{} - {}", m_Game->Meta.Title, Metadata.Title));
+    m_Rendering->SetWindowTitle(fmt::format("{} - {}", m_Game->Meta.Title, Metadata.Title));
 
     m_Logger->trace("Entering the main loop");
 
-    SDL_Event e;
+    Result<> res;
     while (m_RunningFlag->load()) {
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) {
-                m_Logger->trace("SDL_QUIT");
-                Shutdown();
-            }
-        }
+        res = Update();
+        if (res.IsErr())
+            return res;
     }
 
     return Result();

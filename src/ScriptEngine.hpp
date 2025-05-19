@@ -9,14 +9,16 @@
 #include <spdlog/logger.h>
 #include <sol/state.hpp>
 
+#include "EventEngine.hpp"
 #include "Result.hpp"
 
 namespace engine {
 
-class ScriptEngine final {
+class ScriptEngine {
 private:
     std::shared_ptr<spdlog::logger> m_Logger;
     std::shared_ptr<std::atomic<bool>> m_EngineRunning;
+    std::shared_ptr<EventEngine> m_Script;
     sol::state m_Lua;
 
     Result<> InitGlobals();
@@ -24,7 +26,7 @@ private:
 
 public:
     ScriptEngine(sol::state&& lua, std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningRef);
-    ~ScriptEngine() = default;
+    virtual ~ScriptEngine() = default;
 
     static Result<std::shared_ptr<ScriptEngine>> New(std::shared_ptr<spdlog::logger> logger, std::shared_ptr<std::atomic<bool>> engineRunningFlagRef);
 
